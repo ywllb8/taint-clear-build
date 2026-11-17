@@ -62,6 +62,7 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           cd kernel
           make ARCH=arm64 LLVM=1 gki_defconfig
+          ./scripts/config --disable DEBUG_INFO_BTF
           ./scripts/config --enable LTO_CLANG_THIN --disable LTO_CLANG_FULL \
             --enable CFI_CLANG --enable CFI_CLANG_SHADOW
           make ARCH=arm64 LLVM=1 olddefconfig
