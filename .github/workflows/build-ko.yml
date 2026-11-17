@@ -3,7 +3,7 @@ name: 编译可加载 taint_clear.ko（OPPO A6 5G / 5.15.197 参数已预填）
 # ============================================================================
 # 设备实测参数（2026-11-17 核对）：
 #   内核 5.15.197-android13-11-g046261213cac  #1 SMP PREEMPT
-#   编译器 Android (8508608, based on r450784e) clang 14.0.7
+#   编译器 Android (8508608, based on r450784d) clang 14.0.7
 #   配置 LTO_CLANG_FULL / CFI_CLANG / CFI_CLANG_SHADOW / MODVERSIONS / PREEMPT
 #   无 MODULE_SIG_FORCE → 未签名 .ko 可加载
 #
@@ -40,16 +40,16 @@ jobs:
         uses: actions/checkout@v4
         with: { path: module }
 
-      - name: 下载 AOSP 官方 clang-r450784e（与设备完全一致）
+      - name: 下载 AOSP 官方 clang-r450784d（与设备完全一致）
         run: |
           mkdir -p clang
           for ref in refs/heads/main refs/heads/master refs/heads/android13-release; do
             curl -fL --retry 3 -m 1200 \
-              "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/$ref/clang-r450784e.tar.gz" \
+              "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/$ref/clang-r450784d.tar.gz" \
               -o clang.tgz && break
           done
           tar -xzf clang.tgz -C clang
-          clang/bin/clang --version | head -1   # 必须是 clang 14.0.7 / r450784e
+          clang/bin/clang --version | head -1   # 必须是 clang 14.0.7 / r450784d
 
       - name: 拉内核源码（5.15.197 基点）
         run: |
