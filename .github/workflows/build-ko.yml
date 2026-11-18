@@ -39,7 +39,7 @@ jobs:
       - name: 下载 AOSP 官方 clang
         run: |
           mkdir -p clang
-          for ref in refs/heads/main refs/heads/master refs/heads/android13-release; do
+          for ref in main master android13-release; do
             curl -fL --retry 3 -m 1200 \
               "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/$ref/clang-r450784e.tar.gz" \
               -o clang.tgz && break
