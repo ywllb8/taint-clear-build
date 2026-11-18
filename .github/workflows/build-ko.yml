@@ -1,28 +1,14 @@
-name: 编译可加载 taint_clear.ko（OPPO A6 5G / 5.15.197 参数已预填）
-
-# ============================================================================
-# 设备实测参数（2026-11-17 核对）：
-#   内核 5.15.197-android13-11-g046261213cac  #1 SMP PREEMPT
-#   编译器 Android (8508608, based on r450784d) clang 14.0.7
-#   配置 LTO_CLANG_FULL / CFI_CLANG / CFI_CLANG_SHADOW / MODVERSIONS / PREEMPT
-#   无 MODULE_SIG_FORCE → 未签名 .ko 可加载
-#
-# 关键：struct module 含 CONFIG_CFI_CLANG 条件字段，符号 CRC 必须在开 CFI 的
-#       完整内核构建里生成才与设备一致。所以本流程会先编 vmlinux 拿到 Module.symvers，
-#       再编模块（用 ThinLTO 加速链接，CFI 不变 → module_layout CRC 一致）。
-#
-# 用法（手机浏览器）：仓库 → Actions → 本 workflow → Run workflow → 等产物下载
-# ============================================================================
+name: 编译可加载 taint_clear.ko（OPPO A6 5G / 5.15.197）
 
 on:
   workflow_dispatch:
     inputs:
       kernel_ref:
-        description: '内核分支（2026-03 快照顶端 = 5.15.197，已验证）'
+        description: '内核分支'
         required: true
         default: 'android13-5.15-2026-03'
       utsrelease:
-        description: '强制对齐的 vermagic（= 手机 uname -r）'
+        description: '强制对齐的 vermagic'
         required: true
         default: '5.15.197-android13-11-g046261213cac'
 
@@ -30,6 +16,16 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
+      - name: 释放磁盘空间
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
       - name: 装依赖
         run: |
           sudo apt-get update
@@ -40,39 +36,48 @@ jobs:
         uses: actions/checkout@v4
         with: { path: module }
 
-      - name: 下载 AOSP 官方 clang-r450784d（与设备完全一致）
+      - name: 下载 AOSP 官方 clang
         run: |
           mkdir -p clang
           for ref in refs/heads/main refs/heads/master refs/heads/android13-release; do
             curl -fL --retry 3 -m 1200 \
-              "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/$ref/clang-r450784d.tar.gz" \
+              "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/$ref/clang-r450784e.tar.gz" \
               -o clang.tgz && break
           done
           tar -xzf clang.tgz -C clang
-          clang/bin/clang --version | head -1   # 必须是 clang 14.0.7 / r450784d
+          clang/bin/clang --version | head -1
 
-      - name: 拉内核源码（5.15.197 基点）
+      - name: 缓存内核源码
+        uses: actions/cache@v3
+        with:
+          path: kernel
+          key: ${{ runner.os }}-kernel-${{ inputs.kernel_ref }}
+
+      - name: 拉内核源码
         run: |
           git clone --depth 1 --branch "${{ inputs.kernel_ref }}" \
             https://android.googlesource.com/kernel/common kernel
-          grep -m3 -E '^(VERSION|PATCHLEVEL|SUBLEVEL)' kernel/Makefile   # 应为 5.15.197
+          grep -m3 -E '^(VERSION|PATCHLEVEL|SUBLEVEL)' kernel/Makefile
 
-      - name: 配置（gki_defconfig + ThinLTO 加速，保留 CFI）
+      - name: 配置
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           cd kernel
           make ARCH=arm64 LLVM=1 gki_defconfig
-          ./scripts/config --disable DEBUG_INFO_BTF
           ./scripts/config --enable LTO_CLANG_THIN --disable LTO_CLANG_FULL \
             --enable CFI_CLANG --enable CFI_CLANG_SHADOW
           make ARCH=arm64 LLVM=1 olddefconfig
           grep -E '^(CONFIG_LTO_CLANG_THIN|CONFIG_CFI_CLANG|CONFIG_MODVERSIONS|CONFIG_PREEMPT)=' .config
 
-      - name: 编 vmlinux 生成符号 CRC 表（Module.symvers）
+      - name: 编 vmlinux 生成符号 CRC 表
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           cd kernel
-          make ARCH=arm64 LLVM=1 -j"$(nproc)" vmlinux
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          make ARCH=arm64 LLVM=1 -j2 vmlinux
           test -s Module.symvers && echo "Module.symvers 行数: $(wc -l < Module.symvers)"
 
       - name: 对齐 vermagic
@@ -81,7 +86,7 @@ jobs:
           printf '#define UTS_RELEASE "%s"\n' "${{ inputs.utsrelease }}" > include/generated/utsrelease.h
           printf '%s\n' "${{ inputs.utsrelease }}" > include/config/kernel.release
 
-      - name: 编 taint_clear.ko（带正确 CRC）
+      - name: 编 taint_clear.ko
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           cd kernel
@@ -93,22 +98,8 @@ jobs:
 
       - name: 产物报告
         run: |
-          {
-            echo "## taint_clear.ko（OPPO A6 5G / PLS120）"
-            echo '```'
-            file taint_clear.ko
-            strings taint_clear.ko | grep -E '^(vermagic|name|license)=' || true
-            echo '```'
-            echo "vermagic 已对齐 \`${{ inputs.utsrelease }}\`，CRC 来自同源码同 CFI 的完整构建。"
-            echo "### 手机验证（MT 终端 su 后）"
-            echo '```sh'
-            echo 'V=$(cat /proc/sys/kernel/tainted)'
-            echo 'insmod /data/local/tmp/taint_clear.ko expect=$V keep=512'
-            echo 'cat /proc/sys/kernel/tainted   # 期望 512'
-            echo 'dmesg | grep taint_clear'
-            echo '```'
-            echo "若报 disagrees about version of symbol：OPPO 私有补丁改了该符号类型，把报错发回定位（安全拒载）。"
-          } >> "$GITHUB_STEP_SUMMARY"
+          file taint_clear.ko
+          strings taint_clear.ko | grep -E '^(vermagic|name|license)=' || true
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
